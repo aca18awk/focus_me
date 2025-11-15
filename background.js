@@ -1,15 +1,15 @@
 // --- CONSTANTS ---
 const MIN_TO_MS = 60 * 1000;
 const limitsInMs = {
-  trash: 0.5 * MIN_TO_MS,
+  trash: 0.5 * MIN_TO_MS, // Test limit
   interesting: 30 * MIN_TO_MS,
   curriculum: 60 * MIN_TO_MS,
   phd: 9999 * MIN_TO_MS,
 };
 // --- STORAGE KEYS ---
 const TODAY_KEY_CHECK = "lastRunDate";
-const NOTIFICATIONS_KEY = "notificationsSentToday";
-const ACTIVE_TIMERS_KEY = "activeTimers"; // NEW: Key for persistent timers
+const ACTIVE_TIMERS_KEY = "activeTimers";
+const NOTIFICATIONS_KEY = "notificationsSentToday"; // We need this back for the "new day" logic
 
 // --- ALARM CREATION ---
 chrome.runtime.onInstalled.addListener(() => {
@@ -33,7 +33,7 @@ function createStatCheckAlarm() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "checkLimits") {
     console.log("Alarm fired: Checking time limits.");
-    checkLimitsAndNotify();
+    resetStatsOnNewDay();
   }
 });
 
@@ -54,7 +54,6 @@ async function saveActiveTimers(timers) {
 }
 
 // --- MAIN MESSAGE LISTENER ---
-// Note: The whole listener function is now ASYNC
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // A. POPUP IS ASKING FOR LIVE STATS
   if (message.action === "getLiveStats") {
@@ -66,35 +65,102 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // B. POPUP IS STARTING A TIMER
   if (message.action === "startTimer") {
-    // We wrap this in an async IIFE to use await
     (async () => {
       const tabId = message.tabId;
+      const category = message.category;
       if (!tabId) {
         console.error("Message did not contain a tabId.");
         return;
       }
 
+      // 1. First, check if this category is already over the limit.
+      const totalStats = await getTodaysTotalStats();
+      const timeSpent = totalStats[category];
+      const timeLimit = limitsInMs[category];
+
+      if (timeSpent >= timeLimit) {
+        // 2. If OVER limit, just send the block command. Do NOT start a timer.
+        console.log(
+          `Category "${category}" is already over limit. Blocking tab ${tabId}.`
+        );
+        // Send block message and handle potential error
+        chrome.tabs.sendMessage(tabId, { action: "blockVideo" }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn(
+              `Could not send 'blockVideo' to tab ${tabId} (it may be reloading): ${chrome.runtime.lastError.message}`
+            );
+          }
+        });
+        sendResponse({ success: true, blocked: true });
+        return;
+      }
+      // --- END NEW LOGIC ---
+
+      // 3. If NOT over limit, proceed with starting the timer as normal.
       const activeTimers = await getActiveTimers();
       if (activeTimers[tabId]) {
         console.log(`Timer for tab ${tabId} is already running.`);
+        sendResponse({ success: false, reason: "Timer already running." });
         return;
       }
 
-      // Pause all other timers
-      await pauseAllTimers(tabId); // This function is now async
+      await pauseAllTimers(tabId);
 
       activeTimers[tabId] = {
-        category: message.category,
+        category: category,
         totalTimeMs: 0,
         startTime: Date.now(),
       };
 
-      await saveActiveTimers(activeTimers); // SAVE TO STORAGE
+      await saveActiveTimers(activeTimers);
 
       chrome.action.setBadgeText({ tabId: tabId, text: "" });
       console.log(`Timer started for tab ${tabId}:`, activeTimers[tabId]);
-      sendResponse({ success: true });
+      sendResponse({ success: true, blocked: false });
     })();
+    return true;
+  }
+
+  // C. CONTENT SCRIPT "HANDSHAKE"
+  if (message.action === "checkMyStatus") {
+    const tabId = sender.tab.id;
+    if (!tabId) {
+      sendResponse({ action: "unblockVideo" }); // No tab, so unblock
+      return;
+    }
+
+    (async () => {
+      const activeTimers = await getActiveTimers();
+      const timer = activeTimers[tabId];
+
+      // If tab is not categorized, it shouldn't be blocked.
+      if (!timer) {
+        sendResponse({ action: "unblockVideo" });
+        return;
+      }
+
+      // Tab is categorized, so let's check its stats
+      const category = timer.category;
+      const totalStats = await getTodaysTotalStats();
+      const timeSpent = totalStats[category];
+      const timeLimit = limitsInMs[category];
+
+      if (timeSpent >= timeLimit) {
+        // Over limit, tell it to BLOCK
+        console.log(
+          `checkMyStatus: Tab ${tabId} (${category}) is OVER limit. Sending blockVideo.`
+        );
+        await pauseTimer(tabId);
+        sendResponse({ action: "blockVideo" });
+      } else {
+        // Under limit, tell it to UNBLOCK
+        console.log(
+          `checkMyStatus: Tab ${tabId} (${category}) is OK. Sending unblockVideo.`
+        );
+        sendResponse({ action: "unblockVideo" });
+      }
+    })();
+
     return true; // Keep message port open for async response
   }
 });
@@ -241,56 +307,54 @@ async function stopTimerAndSave(tabId) {
   console.log("Active timers remaining:", activeTimers);
 }
 
-// --- NOTIFICATION FUNCTIONS (Updated to use new helpers) ---
+// --- NOTIFICATION/BLOCKING FUNCTIONS ---
 
-async function checkLimitsAndNotify() {
+/**
+ * This function is called by the 1-minute alarm.
+ * Its *only* job is to check if it's a new day and reset stats.
+ * All blocking logic has been removed because blocker.js now polls.
+ * *** THIS IS THE UPDATED/SIMPLIFIED VERSION ***
+ */
+async function resetStatsOnNewDay() {
   const today = new Date().toISOString().split("T")[0];
-  const storageKeys = [TODAY_KEY_CHECK, NOTIFICATIONS_KEY];
-  const storageData = await chrome.storage.local.get(storageKeys);
+  const allStorage = await chrome.storage.local.get(null); // Get everything
 
-  let notificationsSentToday = storageData[NOTIFICATIONS_KEY] || {};
+  // Check if it's a new day.
+  if (allStorage[TODAY_KEY_CHECK] !== today) {
+    console.log("It's a new day! Resetting all daily stats.");
 
-  if (storageData[TODAY_KEY_CHECK] !== today) {
-    await chrome.storage.local.set({
-      [TODAY_KEY_CHECK]: today,
-      [NOTIFICATIONS_KEY]: {},
-    });
-    notificationsSentToday = {};
-    console.log("It's a new day! Resetting notification flags.");
-  }
-
-  const totalStats = await getTodaysTotalStats();
-  let notificationsUpdated = false;
-
-  for (const category in limitsInMs) {
-    const timeSpent = totalStats[category];
-    const timeLimit = limitsInMs[category];
-
-    if (timeSpent >= timeLimit && !notificationsSentToday[category]) {
-      notificationsSentToday[category] = true;
-      notificationsUpdated = true;
-
-      console.log(`Sending notification for category: ${category}`);
-      chrome.notifications.create(`limit-${category}`, {
-        type: "basic",
-        iconUrl: "hello_extensions.png",
-        title: "YouTube Mindfulness",
-        message: `You've reached your ${
-          limitsInMs[category] / MIN_TO_MS
-        } min limit for the "${category}" category today.`,
-        priority: 2,
-      });
+    const keysToRemove = [];
+    // Find all old stat keys (YYYY-MM-DD format)
+    for (const key in allStorage) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+        keysToRemove.push(key);
+      }
     }
+
+    // Also remove the notification key from yesterday (if it exists)
+    if (allStorage[NOTIFICATIONS_KEY]) {
+      keysToRemove.push(NOTIFICATIONS_KEY);
+    }
+
+    // Perform the removal
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      console.log("Removed old daily stats:", keysToRemove);
+    }
+
+    // Set the new date marker
+    await chrome.storage.local.set({ [TODAY_KEY_CHECK]: today });
+  } else {
+    console.log("Still the same day. No reset needed.");
   }
 
-  if (notificationsUpdated) {
-    await chrome.storage.local.set({
-      [NOTIFICATIONS_KEY]: notificationsSentToday,
-    });
-    console.log("Updated notification flags in storage.");
-  }
+  // NO MORE "check limits" or "send message" logic here. It's all
+  // handled by the blocker.js polling 'checkMyStatus'.
 }
 
+/**
+ * A central function to get the *total* time spent today (saved + live).
+ */
 async function getTodaysTotalStats() {
   // 1. Get *SAVED* stats from storage
   const today = new Date().toISOString().split("T")[0];

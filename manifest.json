@@ -18,5 +18,12 @@
     "notifications",
     "alarms"
   ],
-  "host_permissions": ["http://*/*", "https://*/*"]
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [
+    {
+      "matches": ["*://*.youtube.com/watch*"],
+      "js": ["blocker.js"],
+      "css": ["blocker.css"]
+    }
+  ]
 }
