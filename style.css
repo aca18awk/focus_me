@@ -1,0 +1,77 @@
+/* Set a fixed width for the popup and add some padding */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  width: 250px;
+  padding: 15px;
+  background-color: #f4f4f5;
+}
+
+/* A simple title */
+h3 {
+  margin: 0 0 15px 0;
+  text-align: center;
+  color: #18181b; /* Dark text */
+}
+
+/* Use CSS Grid to make a nice 2x2 button layout */
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* Two equal columns */
+  gap: 10px; /* Space between buttons */
+}
+
+/* Style all the buttons */
+button {
+  font-size: 1.8rem; /* Make emoji large */
+  padding: 12px 0;
+  border: 1px solid #d4d4d8; /* Light border */
+  background-color: #ffffff; /* White background */
+  border-radius: 8px; /* Rounded corners */
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+/* Add a hover effect */
+button:hover {
+  background-color: #fafafa; /* Slightly off-white on hover */
+}
+
+/* Disable buttons when not on YouTube */
+button:disabled {
+  background-color: #f4f4f5;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* This is where we can show messages like "Not a YouTube page" */
+#status {
+  margin-top: 15px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-align: center;
+  color: #71717a; /* Muted text color */
+}
+
+/* NEW: Styles for the stats section */
+.stats-container {
+  margin-top: 20px;
+  border-top: 1px solid #d4d4d8;
+  padding-top: 15px;
+}
+
+.stat-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  color: #3f3f46;
+  margin-bottom: 8px;
+}
+
+.stat-label {
+  font-weight: 500;
+}
+
+.stat-value {
+  font-weight: 400;
+  color: #71717a;
+}

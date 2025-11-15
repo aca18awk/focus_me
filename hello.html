@@ -1,0 +1,39 @@
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <h3>Categorize this Video</h3>
+
+    <div class="buttons">
+      <button id="btn-trash">🗑️</button>
+      <button id="btn-interesting">💡</button>
+      <button id="btn-curriculum">🎓</button>
+      <button id="btn-phd">🔬</button>
+    </div>
+
+    <div id="status">Loading...</div>
+
+    <div class="stats-container">
+      <div class="stat-item">
+        <span class="stat-label">🗑️ Trash:</span>
+        <span class="stat-value" id="stats-trash">0 / 10 min</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">💡 Interesting:</span>
+        <span class="stat-value" id="stats-interesting">0 / 30 min</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">🎓 Curriculum:</span>
+        <span class="stat-value" id="stats-curriculum">0 / 60 min</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-label">🔬 PhD:</span>
+        <span class="stat-value" id="stats-phd">... min</span>
+      </div>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
