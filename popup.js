@@ -9,7 +9,8 @@ const limitsInMinutes = {
 
 // --- DOM Elements ---
 let statusEl, trashEl, interestingEl, curriculumEl, phdEl;
-let statUpdateInterval; // To hold our live-update timer
+let allButtons;
+let statUpdateInterval;
 
 // --- Main Function ---
 document.addEventListener("DOMContentLoaded", async () => {
@@ -19,30 +20,37 @@ document.addEventListener("DOMContentLoaded", async () => {
   interestingEl = document.getElementById("stats-interesting");
   curriculumEl = document.getElementById("stats-curriculum");
   phdEl = document.getElementById("stats-phd");
-  const buttons = document.querySelectorAll(".buttons button");
+  allButtons = document.querySelectorAll(".buttons button");
 
-  // 2. Check Tab URL & Set Status
+  // 2. Check Tab URL
   let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const youtubeURL = "youtube.com/watch";
   const isYouTubeVideo = tab.url && tab.url.includes(youtubeURL);
 
-  if (isYouTubeVideo) {
-    statusEl.textContent = "Categorize this video:";
-    buttons.forEach((btn) => (btn.disabled = false));
-  } else {
+  if (!isYouTubeVideo) {
     statusEl.textContent = "Not on a YouTube video page.";
-    buttons.forEach((btn) => (btn.disabled = true));
+    allButtons.forEach((btn) => (btn.disabled = true));
+    return; // Stop here if not on a video
   }
 
-  // 3. Add Button Listeners
-  // Pass the tab.id from our query, as it's more reliable
-  addClickListeners(tab.id);
+  // 3. NEW: Check if tab is *already* categorized
+  chrome.runtime.sendMessage(
+    { action: "getTabStatus", tabId: tab.id },
+    (response) => {
+      if (response && response.category) {
+        // --- This tab is ALREADY categorized ---
+        statusEl.textContent = "This video is categorized as:";
+        showCategorizedUI(response.category);
+      } else {
+        // --- This tab is NOT categorized ---
+        statusEl.textContent = "Categorize this video:";
+        addClickListeners(tab.id); // Only add listeners if uncategorized
+      }
+    }
+  );
 
-  // 4. Start Live Stats Update
-  // First, run it *once* to load the stats immediately
+  // 4. Start Live Stats Update (this runs regardless)
   updateStatsDisplay();
-
-  // Then, set it to run every second while the popup is open
   statUpdateInterval = setInterval(updateStatsDisplay, 1000);
 });
 
@@ -56,13 +64,11 @@ window.addEventListener("unload", () => {
 // --- Helper Functions ---
 
 /**
- * Asks the background script for the latest stats and updates the HTML.
+ * Updates the stats display
  */
 async function updateStatsDisplay() {
-  // Use 'getLiveStats' which now returns the TOTAL (saved + live)
   chrome.runtime.sendMessage({ action: "getLiveStats" }, (totalStats) => {
-    // Check if stats were returned (can fail during reloads)
-    if (!totalStats) return;
+    if (chrome.runtime.lastError || !totalStats) return; // Fail gracefully
 
     const msToMins = (ms) => (ms / MIN_TO_MS).toFixed(2);
 
@@ -103,5 +109,31 @@ function addClickListeners(tabId) {
         }
       );
     });
+  });
+}
+
+/**
+ * NEW: Disables buttons and shows the already-selected category.
+ */
+function showCategorizedUI(category) {
+  const categoryToEmoji = {
+    trash: "🗑️",
+    interesting: "💡",
+    curriculum: "🎓",
+    phd: "🔬",
+  };
+
+  // Update the status message to be more specific
+  statusEl.textContent = `Categorized as: ${categoryToEmoji[category] || ""}`;
+
+  allButtons.forEach((btn) => {
+    btn.disabled = true; // Disable all buttons
+
+    // Add a special class to the selected button
+    if (btn.id === `btn-${category}`) {
+      btn.classList.add("selected");
+    } else {
+      btn.classList.remove("selected");
+    }
   });
 }

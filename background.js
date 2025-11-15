@@ -9,7 +9,6 @@ const limitsInMs = {
 // --- STORAGE KEYS ---
 const TODAY_KEY_CHECK = "lastRunDate";
 const ACTIVE_TIMERS_KEY = "activeTimers";
-const NOTIFICATIONS_KEY = "notificationsSentToday"; // We need this back for the "new day" logic
 
 // --- ALARM CREATION ---
 chrome.runtime.onInstalled.addListener(() => {
@@ -33,7 +32,7 @@ function createStatCheckAlarm() {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "checkLimits") {
     console.log("Alarm fired: Checking time limits.");
-    resetStatsOnNewDay();
+    resetFlagsOnNewDay();
   }
 });
 
@@ -68,6 +67,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     (async () => {
       const tabId = message.tabId;
       const category = message.category;
+      chrome.action.setBadgeText({ tabId: tabId, text: "" });
+
       if (!tabId) {
         console.error("Message did not contain a tabId.");
         return;
@@ -114,7 +115,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       await saveActiveTimers(activeTimers);
 
-      chrome.action.setBadgeText({ tabId: tabId, text: "" });
       console.log(`Timer started for tab ${tabId}:`, activeTimers[tabId]);
       sendResponse({ success: true, blocked: false });
     })();
@@ -161,6 +161,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     })();
 
+    return true; // Keep message port open for async response
+  }
+
+  if (message.action === "getTabStatus") {
+    (async () => {
+      const { tabId } = message;
+      if (!tabId) {
+        sendResponse({ category: null });
+        return;
+      }
+
+      const activeTimers = await getActiveTimers();
+      const timer = activeTimers[tabId];
+
+      if (timer) {
+        sendResponse({ category: timer.category });
+      } else {
+        sendResponse({ category: null });
+      }
+    })();
     return true; // Keep message port open for async response
   }
 });
@@ -315,43 +335,24 @@ async function stopTimerAndSave(tabId) {
  * All blocking logic has been removed because blocker.js now polls.
  * *** THIS IS THE UPDATED/SIMPLIFIED VERSION ***
  */
-async function resetStatsOnNewDay() {
+async function resetFlagsOnNewDay() {
   const today = new Date().toISOString().split("T")[0];
-  const allStorage = await chrome.storage.local.get(null); // Get everything
+  const storageKeys = [TODAY_KEY_CHECK];
+  const allStorage = await chrome.storage.local.get(storageKeys);
 
   // Check if it's a new day.
   if (allStorage[TODAY_KEY_CHECK] !== today) {
-    console.log("It's a new day! Resetting all daily stats.");
+    console.log("It's a new day! Resetting notification flags.");
 
-    const keysToRemove = [];
-    // Find all old stat keys (YYYY-MM-DD format)
-    for (const key in allStorage) {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(key)) {
-        keysToRemove.push(key);
-      }
-    }
-
-    // Also remove the notification key from yesterday (if it exists)
-    if (allStorage[NOTIFICATIONS_KEY]) {
-      keysToRemove.push(NOTIFICATIONS_KEY);
-    }
-
-    // Perform the removal
-    if (keysToRemove.length > 0) {
-      await chrome.storage.local.remove(keysToRemove);
-      console.log("Removed old daily stats:", keysToRemove);
-    }
-
-    // Set the new date marker
-    await chrome.storage.local.set({ [TODAY_KEY_CHECK]: today });
+    // We only need to reset the notification flags and the date check
+    // We will NO LONGER remove the daily stat keys (e.g., "2025-11-15")
+    await chrome.storage.local.set({
+      [TODAY_KEY_CHECK]: today,
+    });
   } else {
     console.log("Still the same day. No reset needed.");
   }
-
-  // NO MORE "check limits" or "send message" logic here. It's all
-  // handled by the blocker.js polling 'checkMyStatus'.
 }
-
 /**
  * A central function to get the *total* time spent today (saved + live).
  */

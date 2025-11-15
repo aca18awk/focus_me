@@ -1,4 +1,3 @@
-/* Set a fixed width for the popup and add some padding */
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   width: 250px;
@@ -6,21 +5,18 @@ body {
   background-color: #f4f4f5;
 }
 
-/* A simple title */
 h3 {
   margin: 0 0 15px 0;
   text-align: center;
   color: #18181b; /* Dark text */
 }
 
-/* Use CSS Grid to make a nice 2x2 button layout */
 .buttons {
   display: grid;
   grid-template-columns: 1fr 1fr; /* Two equal columns */
   gap: 10px; /* Space between buttons */
 }
 
-/* Style all the buttons */
 button {
   font-size: 1.8rem; /* Make emoji large */
   padding: 12px 0;
@@ -28,22 +24,28 @@ button {
   background-color: #ffffff; /* White background */
   border-radius: 8px; /* Rounded corners */
   cursor: pointer;
-  transition: background-color 0.2s ease;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+  opacity: 0.7; /* Make all buttons slightly transparent by default */
 }
 
-/* Add a hover effect */
-button:hover {
+button:hover:not(:disabled) {
   background-color: #fafafa; /* Slightly off-white on hover */
+  opacity: 1;
 }
 
-/* Disable buttons when not on YouTube */
 button:disabled {
-  background-color: #f4f4f5;
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.6; /* Keep disabled buttons faded */
 }
 
-/* This is where we can show messages like "Not a YouTube page" */
+/* NEW: This is the style for the "locked-in" button */
+button.selected {
+  border-color: #0d6efd; /* A nice blue border */
+  background-color: #f0f6ff; /* A very light blue background */
+  opacity: 1; /* Make the selected one fully opaque */
+  cursor: not-allowed;
+}
+
 #status {
   margin-top: 15px;
   font-size: 0.9rem;
@@ -52,7 +54,6 @@ button:disabled {
   color: #71717a; /* Muted text color */
 }
 
-/* NEW: Styles for the stats section */
 .stats-container {
   margin-top: 20px;
   border-top: 1px solid #d4d4d8;
