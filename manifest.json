@@ -1,6 +1,6 @@
 {
-  "name": "Hello Extensions",
-  "description": "Base Level Extension",
+  "name": "FocusMe",
+  "description": "Extension to track the time spent on Youtube videos",
   "version": "1.0",
   "manifest_version": 3,
   "action": {
@@ -10,6 +10,13 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["tabs", "activeTab", "nativeMessaging", "storage"],
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "nativeMessaging",
+    "storage",
+    "notifications",
+    "alarms"
+  ],
   "host_permissions": ["http://*/*", "https://*/*"]
 }
