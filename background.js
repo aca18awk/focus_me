@@ -28,11 +28,16 @@ function createStatCheckAlarm() {
   });
 }
 
-// --- ALARM LISTENER ---
+// --- ALARM LISTENER (*** UPDATED ***) ---
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "checkLimits") {
-    console.log("Alarm fired: Checking time limits.");
+    console.log("Alarm fired: Checking time limits and for new day.");
+
+    // 1. Check if it's a new day
     resetFlagsOnNewDay();
+
+    // 2. NEW: Proactively check all limits and block if necessary
+    proactivelyCheckLimits();
   }
 });
 
@@ -78,13 +83,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const totalStats = await getTodaysTotalStats();
       const timeSpent = totalStats[category];
       const timeLimit = limitsInMs[category];
+      const activeTimers = await getActiveTimers(); // Get this earlier
 
+      // 2. Check if already categorized
+      if (activeTimers[tabId]) {
+        console.log(`Timer for tab ${tabId} is already running.`);
+        sendResponse({ success: false, reason: "Timer already running." });
+        return;
+      }
+
+      // 3. Pause other timers
+      await pauseAllTimers(tabId);
+
+      // 4. Check if over limit
       if (timeSpent >= timeLimit) {
-        // 2. If OVER limit, just send the block command. Do NOT start a timer.
         console.log(
-          `Category "${category}" is already over limit. Blocking tab ${tabId}.`
+          `Category "${category}" is already over limit. Saving as 'blocked' and attempting to block.`
         );
-        // Send block message and handle potential error
+
+        // *** NEW LOGIC: Save it as a "blocked" timer ***
+        // This taints the tab. Even if sendMessage fails, the 5-sec
+        // poller (runHandshake) will now see this tab is categorized.
+        activeTimers[tabId] = {
+          category: category,
+          totalTimeMs: 0,
+          startTime: null, // Explicitly null, it's not "running"
+        };
+        await saveActiveTimers(activeTimers);
+
+        // Now, *try* to send the block message. It's okay if this fails.
+        // The 5-sec poller is our fallback.
         chrome.tabs.sendMessage(tabId, { action: "blockVideo" }, (response) => {
           if (chrome.runtime.lastError) {
             console.warn(
@@ -92,21 +120,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             );
           }
         });
+
         sendResponse({ success: true, blocked: true });
-        return;
+        return; // We are done.
       }
       // --- END NEW LOGIC ---
 
-      // 3. If NOT over limit, proceed with starting the timer as normal.
-      const activeTimers = await getActiveTimers();
-      if (activeTimers[tabId]) {
-        console.log(`Timer for tab ${tabId} is already running.`);
-        sendResponse({ success: false, reason: "Timer already running." });
-        return;
-      }
-
-      await pauseAllTimers(tabId);
-
+      // 5. If NOT over limit, proceed with starting the timer as normal.
       activeTimers[tabId] = {
         category: category,
         totalTimeMs: 0,
@@ -197,17 +217,19 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const activeTimers = await getActiveTimers();
-  if (changeInfo.url && activeTimers[tabId]) {
+  if (changeInfo.url) {
     if (changeInfo.url.includes("youtube.com/watch")) {
-      console.log(`Tab ${tabId} navigated to new video. Stopping old timer.`);
-      await stopTimerAndSave(tabId);
-
       chrome.action.setBadgeText({ tabId: tabId, text: "!" });
       chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
-    } else {
-      console.log(`Tab ${tabId} navigated away. Stopping timer.`);
+    }
+    if (activeTimers[tabId]) {
       await stopTimerAndSave(tabId);
-      chrome.action.setBadgeText({ tabId: tabId, text: "" });
+      if (changeInfo.url.includes("youtube.com/watch")) {
+        console.log(`Tab ${tabId} navigated to new video. Stopping old timer.`);
+      } else {
+        console.log(`Tab ${tabId} navigated away. Stopping timer.`);
+        chrome.action.setBadgeText({ tabId: tabId, text: "" });
+      }
     }
   }
 });
@@ -350,9 +372,65 @@ async function resetFlagsOnNewDay() {
       [TODAY_KEY_CHECK]: today,
     });
   } else {
-    console.log("Still the same day. No reset needed.");
+    // console.log("Still the same day. No reset needed."); // Too noisy for alarm
   }
 }
+
+/**
+ * *** NEW FUNCTION ***
+ * Called by the 1-minute alarm to proactively block tabs.
+ * This is a fallback for the 5-second poller in blocker.js.
+ */
+async function proactivelyCheckLimits() {
+  console.log("Alarm: Proactively checking limits...");
+  const totalStats = await getTodaysTotalStats();
+  const activeTimers = await getActiveTimers();
+
+  const overLimitCategories = new Set();
+
+  // Find which categories are over limit
+  for (const category in limitsInMs) {
+    if (totalStats[category] >= limitsInMs[category]) {
+      overLimitCategories.add(category);
+    }
+  }
+
+  if (overLimitCategories.size === 0) {
+    console.log("Alarm: All categories are within limits.");
+    return; // Nothing to do
+  }
+
+  console.log("Alarm: Found over-limit categories:", overLimitCategories);
+
+  // Now, find all active timers that belong to those categories
+  for (const tabIdStr in activeTimers) {
+    const tabId = parseInt(tabIdStr);
+    const timer = activeTimers[tabId];
+
+    if (timer && overLimitCategories.has(timer.category)) {
+      // This tab is active and in an over-limit category.
+      // We must pause it and tell it to block.
+
+      console.log(
+        `Alarm: Blocking tab ${tabId} for category ${timer.category}`
+      );
+
+      // 1. Pause the timer (if it's running)
+      // This is safe to call even if already paused
+      await pauseTimer(tabId);
+
+      // 2. Send the block message
+      chrome.tabs.sendMessage(tabId, { action: "blockVideo" }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn(
+            `Alarm: Could not send 'blockVideo' to tab ${tabId}: ${chrome.runtime.lastError.message}`
+          );
+        }
+      });
+    }
+  }
+}
+
 /**
  * A central function to get the *total* time spent today (saved + live).
  */
