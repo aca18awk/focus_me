@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FocusMe Settings</title>
+    <!-- We are linking the CSS file now -->
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <img src="../icons/logo.png" alt="FocusMe Logo" class="logo" />
+        <h1>FocusMe Settings</h1>
+      </header>
+
+      <!-- Tab Navigation -->
+      <nav class="tab-nav">
+        <button class="tab-link active" data-tab="tab-settings">
+          Settings
+        </button>
+        <button class="tab-link" data-tab="tab-stats">Stats</button>
+      </nav>
+
+      <!-- Tab Content -->
+      <main class="tab-content">
+        <!-- Main Settings Tab -->
+        <section id="tab-settings" class="tab-pane active">
+          <div class="settings-section">
+            <h2>Time Limits</h2>
+            <p>Set daily time limits for each category (in minutes).</p>
+            <div class="settings-grid">
+              <!-- Trash Card -->
+              <div class="setting-card card-trash">
+                <h3>🗑️ Trash</h3>
+                <input
+                  type="number"
+                  id="limit-trash"
+                  class="time-input"
+                  min="0"
+                />
+              </div>
+              <!-- Interesting Card -->
+              <div class="setting-card card-interesting">
+                <h3>💡 Interesting</h3>
+                <input
+                  type="number"
+                  id="limit-interesting"
+                  class="time-input"
+                  min="0"
+                />
+              </div>
+              <!-- Curriculum Card -->
+              <div class="setting-card card-curriculum">
+                <h3>🎓 Curriculum</h3>
+                <input
+                  type="number"
+                  id="limit-curriculum"
+                  class="time-input"
+                  min="0"
+                />
+              </div>
+              <!-- PhD Card -->
+              <div class="setting-card card-phd">
+                <h3>🔬 PhD</h3>
+                <input
+                  type="number"
+                  id="limit-phd"
+                  class="time-input"
+                  min="0"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h2>AI Auto-Categorization</h2>
+            <p>
+              Add keywords to help the (future) AI automatically categorize
+              videos.
+            </p>
+
+            <!-- Curriculum Keywords Card -->
+            <div class="setting-card keyword-card card-curriculum">
+              <h3>🎓 Curriculum Keywords</h3>
+              <p>What topics are you actively learning?</p>
+              <div class="tag-input-container" id="tags-curriculum">
+                <!-- Tags will be added here by JS -->
+                <input
+                  type="text"
+                  class="tag-input"
+                  placeholder="Type a topic and press Enter..."
+                />
+              </div>
+            </div>
+
+            <!-- PhD Keywords Card -->
+            <div class="setting-card keyword-card card-phd">
+              <h3>🔬 PhD Keywords</h3>
+              <p>What are your deep, long-term research topics?</p>
+              <div class="tag-input-container" id="tags-phd">
+                <!-- Tags will be added here by JS -->
+                <input
+                  type="text"
+                  class="tag-input"
+                  placeholder="Type a topic and press Enter..."
+                />
+              </div>
+            </div>
+          </div>
+
+          <button id="save-button" class="save-btn">Save Settings</button>
+        </section>
+
+        <!-- Statistics Tab -->
+        <section id="tab-stats" class="tab-pane">
+          <div class="settings-section">
+            <h2>Your Stats</h2>
+            <p>
+              Visualizations of your time usage will appear here soon (Step 2).
+            </p>
+            <!-- Chart.js canvas will go here -->
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- We will add logic to this file next -->
+    <script src="settings.js"></script>
+  </body>
+</html>

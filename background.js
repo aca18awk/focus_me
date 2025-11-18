@@ -1,24 +1,74 @@
 // --- CONSTANTS ---
 const MIN_TO_MS = 60 * 1000;
-const limitsInMs = {
-  trash: 0.5 * MIN_TO_MS, // Test limit
-  interesting: 30 * MIN_TO_MS,
-  curriculum: 60 * MIN_TO_MS,
-  phd: 9999 * MIN_TO_MS,
-};
 // --- STORAGE KEYS ---
 const TODAY_KEY_CHECK = "lastRunDate";
 const ACTIVE_TIMERS_KEY = "activeTimers";
+const SETTINGS_KEY = "userSettings"; // From settings.js
 
-// --- ALARM CREATION ---
+// --- Settings Cache ---
+let userSettings = {
+  limits: {}, // in minutes
+  limitsInMs: {}, // in milliseconds
+  keywords: {},
+};
+
+const DEFAULT_LIMITS = {
+  trash: 0.5,
+  interesting: 30,
+  curriculum: 60,
+  phd: 9999,
+};
+
+// --- Function to load settings ---
+async function loadSettings() {
+  const data = await chrome.storage.local.get(SETTINGS_KEY);
+  const savedSettings = data[SETTINGS_KEY] || {};
+
+  userSettings.limits = savedSettings.limits || DEFAULT_LIMITS;
+  userSettings.keywords = savedSettings.keywords || {
+    curriculum: [],
+    phd: [],
+  };
+
+  // Convert limits to milliseconds for internal use
+  userSettings.limitsInMs = {};
+  for (const category in userSettings.limits) {
+    userSettings.limitsInMs[category] =
+      userSettings.limits[category] * MIN_TO_MS;
+  }
+  console.log("Settings loaded and cache updated:", userSettings);
+}
+
+// --- NEW: Gatekeeper function for Service Worker wakeup ---
+/**
+ * Ensures settings are loaded, especially after service worker wakeup.
+ */
+async function ensureSettingsLoaded() {
+  if (!userSettings.limitsInMs.trash) {
+    console.log("Service worker woke up or settings empty. Reloading...");
+    await loadSettings();
+  }
+}
+
+// --- ALARM CREATION & Load settings on start ---
 chrome.runtime.onInstalled.addListener(() => {
   createStatCheckAlarm();
+  loadSettings(); // Load settings on install
   console.log("Alarm created on install.");
 });
 
 chrome.runtime.onStartup.addListener(() => {
   createStatCheckAlarm();
+  loadSettings(); // Load settings on startup
   console.log("Alarm created on startup.");
+});
+
+// --- Listen for settings changes ---
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  if (namespace === "local" && changes[SETTINGS_KEY]) {
+    console.log("Storage changed! Reloading settings cache...");
+    loadSettings();
+  }
 });
 
 function createStatCheckAlarm() {
@@ -28,20 +78,22 @@ function createStatCheckAlarm() {
   });
 }
 
-// --- ALARM LISTENER (*** UPDATED ***) ---
+// --- ALARM LISTENER ---
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === "checkLimits") {
     console.log("Alarm fired: Checking time limits and for new day.");
-
-    // 1. Check if it's a new day
-    resetFlagsOnNewDay();
-
-    // 2. NEW: Proactively check all limits and block if necessary
-    proactivelyCheckLimits();
+    // We MUST ensure settings are loaded before running alarm logic
+    (async () => {
+      await ensureSettingsLoaded();
+      // 1. Check if it's a new day
+      resetFlagsOnNewDay();
+      // 2. Proactively check all limits and block if necessary
+      proactivelyCheckLimits();
+    })();
   }
 });
 
-// --- NEW STORAGE HELPER FUNCTIONS ---
+// --- STORAGE HELPER FUNCTIONS ---
 /**
  * Gets the active timers object from storage.
  */
@@ -58,18 +110,27 @@ async function saveActiveTimers(timers) {
 }
 
 // --- MAIN MESSAGE LISTENER ---
+// *** THIS IS THE FIX: Removed the stray '.' before '=>' ***
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // A. POPUP IS ASKING FOR LIVE STATS
   if (message.action === "getLiveStats") {
-    getTodaysTotalStats().then((totalStats) => {
-      sendResponse(totalStats);
-    });
+    (async () => {
+      await ensureSettingsLoaded(); // CLEANUP
+
+      const totalStats = await getTodaysTotalStats();
+      sendResponse({
+        stats: totalStats,
+        limits: userSettings.limits, // Send limits in minutes
+      });
+    })();
     return true; // Keep message port open for async response
   }
 
   // B. POPUP IS STARTING A TIMER
   if (message.action === "startTimer") {
     (async () => {
+      await ensureSettingsLoaded(); // CLEANUP
+
       const tabId = message.tabId;
       const category = message.category;
       chrome.action.setBadgeText({ tabId: tabId, text: "" });
@@ -82,37 +143,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // 1. First, check if this category is already over the limit.
       const totalStats = await getTodaysTotalStats();
       const timeSpent = totalStats[category];
-      const timeLimit = limitsInMs[category];
-      const activeTimers = await getActiveTimers(); // Get this earlier
+      const timeLimit = userSettings.limitsInMs[category]; // Now reliable
 
-      // 2. Check if already categorized
-      if (activeTimers[tabId]) {
-        console.log(`Timer for tab ${tabId} is already running.`);
-        sendResponse({ success: false, reason: "Timer already running." });
-        return;
-      }
-
-      // 3. Pause other timers
-      await pauseAllTimers(tabId);
-
-      // 4. Check if over limit
       if (timeSpent >= timeLimit) {
+        // 2. If OVER limit, just send the block command. Do NOT start a timer.
         console.log(
-          `Category "${category}" is already over limit. Saving as 'blocked' and attempting to block.`
+          `Category "${category}" is already over limit. Blocking tab ${tabId}.`
         );
-
-        // *** NEW LOGIC: Save it as a "blocked" timer ***
-        // This taints the tab. Even if sendMessage fails, the 5-sec
-        // poller (runHandshake) will now see this tab is categorized.
+        // *** NEW FIX from previous bug (ensures tab is tainted) ***
+        const activeTimers = await getActiveTimers();
         activeTimers[tabId] = {
           category: category,
           totalTimeMs: 0,
-          startTime: null, // Explicitly null, it's not "running"
+          startTime: null, // Timer is "active" but not running
         };
         await saveActiveTimers(activeTimers);
+        // *** END FIX ***
 
-        // Now, *try* to send the block message. It's okay if this fails.
-        // The 5-sec poller is our fallback.
         chrome.tabs.sendMessage(tabId, { action: "blockVideo" }, (response) => {
           if (chrome.runtime.lastError) {
             console.warn(
@@ -120,13 +167,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             );
           }
         });
-
         sendResponse({ success: true, blocked: true });
-        return; // We are done.
+        return;
       }
       // --- END NEW LOGIC ---
 
-      // 5. If NOT over limit, proceed with starting the timer as normal.
+      // 3. If NOT over limit, proceed with starting the timer as normal.
+      const activeTimers = await getActiveTimers();
+      if (activeTimers[tabId]) {
+        console.log(`Timer for tab ${tabId} is already running.`);
+        sendResponse({ success: false, reason: "Timer already running." });
+        return;
+      }
+
+      await pauseAllTimers(tabId);
+
       activeTimers[tabId] = {
         category: category,
         totalTimeMs: 0,
@@ -150,21 +205,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
 
     (async () => {
+      await ensureSettingsLoaded(); // CLEANUP
+
+      // 2. Get the timer for this tab
       const activeTimers = await getActiveTimers();
       const timer = activeTimers[tabId];
 
-      // If tab is not categorized, it shouldn't be blocked.
+      // 3. If tab is not categorized, it's not blocked.
       if (!timer) {
         sendResponse({ action: "unblockVideo" });
         return;
       }
 
-      // Tab is categorized, so let's check its stats
+      // 4. Tab *is* categorized, so check its stats
       const category = timer.category;
       const totalStats = await getTodaysTotalStats();
       const timeSpent = totalStats[category];
-      const timeLimit = limitsInMs[category];
+      const timeLimit = userSettings.limitsInMs[category];
 
+      // 5. Respond with the correct action
       if (timeSpent >= timeLimit) {
         // Over limit, tell it to BLOCK
         console.log(
@@ -184,6 +243,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true; // Keep message port open for async response
   }
 
+  // D. POPUP IS ASKING FOR TAB STATUS
   if (message.action === "getTabStatus") {
     (async () => {
       const { tabId } = message;
@@ -218,17 +278,20 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const activeTimers = await getActiveTimers();
   if (changeInfo.url) {
+    // If it's a new video page, show the "!"
     if (changeInfo.url.includes("youtube.com/watch")) {
       chrome.action.setBadgeText({ tabId: tabId, text: "!" });
       chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
     }
+
+    // If the tab was being timed, stop the timer
     if (activeTimers[tabId]) {
       await stopTimerAndSave(tabId);
       if (changeInfo.url.includes("youtube.com/watch")) {
         console.log(`Tab ${tabId} navigated to new video. Stopping old timer.`);
       } else {
         console.log(`Tab ${tabId} navigated away. Stopping timer.`);
-        chrome.action.setBadgeText({ tabId: tabId, text: "" });
+        chrome.action.setBadgeText({ tabId: tabId, text: "" }); // Clear badge if navigating away from YT
       }
     }
   }
@@ -303,6 +366,23 @@ async function resumeTimer(tabId) {
   const timerData = activeTimers[tabId];
 
   if (timerData && timerData.startTime === null) {
+    // *** NEW SAFETY CHECK ***
+    // Before resuming, check if the category is over limit
+    await ensureSettingsLoaded();
+    const totalStats = await getTodaysTotalStats();
+    const timeSpent = totalStats[timerData.category];
+    const timeLimit = userSettings.limitsInMs[timerData.category];
+
+    if (timeSpent >= timeLimit) {
+      console.log(
+        `Resume denied: Tab ${tabId} category ${timerData.category} is over limit.`
+      );
+      // Ensure it's blocked
+      chrome.tabs.sendMessage(tabId, { action: "blockVideo" });
+      return; // Do not resume
+    }
+    // *** END CHECK ***
+
     timerData.startTime = Date.now();
     console.log(`Resumed timer for tab ${tabId}.`);
     await saveActiveTimers(activeTimers); // SAVE TO STORAGE
@@ -352,10 +432,7 @@ async function stopTimerAndSave(tabId) {
 // --- NOTIFICATION/BLOCKING FUNCTIONS ---
 
 /**
- * This function is called by the 1-minute alarm.
- * Its *only* job is to check if it's a new day and reset stats.
- * All blocking logic has been removed because blocker.js now polls.
- * *** THIS IS THE UPDATED/SIMPLIFIED VERSION ***
+ * Checks if it's a new day and resets daily flags.
  */
 async function resetFlagsOnNewDay() {
   const today = new Date().toISOString().split("T")[0];
@@ -365,21 +442,16 @@ async function resetFlagsOnNewDay() {
   // Check if it's a new day.
   if (allStorage[TODAY_KEY_CHECK] !== today) {
     console.log("It's a new day! Resetting notification flags.");
-
-    // We only need to reset the notification flags and the date check
-    // We will NO LONGER remove the daily stat keys (e.g., "2025-11-15")
     await chrome.storage.local.set({
       [TODAY_KEY_CHECK]: today,
     });
   } else {
-    // console.log("Still the same day. No reset needed."); // Too noisy for alarm
+    // console.log("Still the same day. No reset needed."); // Too noisy
   }
 }
 
 /**
- * *** NEW FUNCTION ***
  * Called by the 1-minute alarm to proactively block tabs.
- * This is a fallback for the 5-second poller in blocker.js.
  */
 async function proactivelyCheckLimits() {
   console.log("Alarm: Proactively checking limits...");
@@ -387,6 +459,7 @@ async function proactivelyCheckLimits() {
   const activeTimers = await getActiveTimers();
 
   const overLimitCategories = new Set();
+  const limitsInMs = userSettings.limitsInMs;
 
   // Find which categories are over limit
   for (const category in limitsInMs) {
@@ -396,7 +469,7 @@ async function proactivelyCheckLimits() {
   }
 
   if (overLimitCategories.size === 0) {
-    console.log("Alarm: All categories are within limits.");
+    // console.log("Alarm: All categories are within limits."); // Too noisy
     return; // Nothing to do
   }
 
@@ -408,18 +481,12 @@ async function proactivelyCheckLimits() {
     const timer = activeTimers[tabId];
 
     if (timer && overLimitCategories.has(timer.category)) {
-      // This tab is active and in an over-limit category.
-      // We must pause it and tell it to block.
-
       console.log(
         `Alarm: Blocking tab ${tabId} for category ${timer.category}`
       );
+      await pauseTimer(tabId); // Pause the timer
 
-      // 1. Pause the timer (if it's running)
-      // This is safe to call even if already paused
-      await pauseTimer(tabId);
-
-      // 2. Send the block message
+      // Send the block message
       chrome.tabs.sendMessage(tabId, { action: "blockVideo" }, (response) => {
         if (chrome.runtime.lastError) {
           console.warn(

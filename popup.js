@@ -1,11 +1,5 @@
 // --- Constants ---
 const MIN_TO_MS = 60 * 1000;
-const limitsInMinutes = {
-  trash: 0.5,
-  interesting: 30,
-  curriculum: 60,
-  phd: 9999,
-};
 
 // --- DOM Elements ---
 let statusEl, trashEl, interestingEl, curriculumEl, phdEl;
@@ -33,10 +27,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     return; // Stop here if not on a video
   }
 
-  // 3. NEW: Check if tab is *already* categorized
+  // 3. Check if tab is *already* categorized
+  // THIS IS THE FIX: We are correctly calling "getTabStatus"
   chrome.runtime.sendMessage(
     { action: "getTabStatus", tabId: tab.id },
     (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "Error getting tab status:",
+          chrome.runtime.lastError.message
+        );
+        statusEl.textContent = "Error. Please reload.";
+        return;
+      }
+
       if (response && response.category) {
         // --- This tab is ALREADY categorized ---
         statusEl.textContent = "This video is categorized as:";
@@ -67,21 +71,40 @@ window.addEventListener("unload", () => {
  * Updates the stats display
  */
 async function updateStatsDisplay() {
-  chrome.runtime.sendMessage({ action: "getLiveStats" }, (totalStats) => {
-    if (chrome.runtime.lastError || !totalStats) return; // Fail gracefully
+  // NEW: The response is now an object { stats, limits }
+  chrome.runtime.sendMessage({ action: "getLiveStats" }, (response) => {
+    // *** UPDATED: More robust check ***
+    if (
+      chrome.runtime.lastError ||
+      !response ||
+      !response.stats ||
+      !response.limits
+    ) {
+      console.warn(
+        "Error getting live stats or limits (background script might be waking up):",
+        chrome.runtime.lastError
+      );
+      // Show a loading state to prevent "undefined"
+      trashEl.textContent = "Loading...";
+      interestingEl.textContent = "Loading...";
+      curriculumEl.textContent = "Loading...";
+      phdEl.textContent = "Loading...";
+      return; // Fail gracefully and wait for next 1-sec update
+    }
 
+    const { stats, limits } = response;
     const msToMins = (ms) => (ms / MIN_TO_MS).toFixed(2);
 
-    trashEl.textContent = `${msToMins(totalStats.trash)} / ${
-      limitsInMinutes.trash
+    // *** UPDATED: Read from stats and limits objects ***
+    // Add fallback checks for safety
+    trashEl.textContent = `${msToMins(stats.trash)} / ${limits.trash || 0} min`;
+    interestingEl.textContent = `${msToMins(stats.interesting)} / ${
+      limits.interesting || 0
     } min`;
-    interestingEl.textContent = `${msToMins(totalStats.interesting)} / ${
-      limitsInMinutes.interesting
+    curriculumEl.textContent = `${msToMins(stats.curriculum)} / ${
+      limits.curriculum || 0
     } min`;
-    curriculumEl.textContent = `${msToMins(totalStats.curriculum)} / ${
-      limitsInMinutes.curriculum
-    } min`;
-    phdEl.textContent = `${msToMins(totalStats.phd)} min`;
+    phdEl.textContent = `${msToMins(stats.phd)} min`;
   });
 }
 
@@ -113,7 +136,7 @@ function addClickListeners(tabId) {
 }
 
 /**
- * NEW: Disables buttons and shows the already-selected category.
+ * Disables buttons and shows the already-selected category.
  */
 function showCategorizedUI(category) {
   const categoryToEmoji = {
