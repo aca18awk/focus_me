@@ -6,6 +6,58 @@ let statusEl, trashEl, interestingEl, curriculumEl, phdEl;
 let allButtons;
 let statUpdateInterval;
 
+const CATEGORIES = ["trash", "interesting", "curriculum", "phd"];
+
+/**
+ * Executes the AI classification logic:
+ * 1. Safely requests the video title from the active tab.
+ * 2. Sends the title to the background script for Gemini API call.
+ * 3. Auto-starts the timer based on the AI's response.
+ */
+const getAiTitle = async (tabId) => {
+  const getTitleFromTab = (tabId) => {
+    return new Promise((resolve, reject) => {
+      chrome.tabs.sendMessage(
+        tabId,
+        { action: "requestTitleFromTab" },
+        (response) => {
+          if (chrome.runtime.lastError) {
+            // This catches the 'Receiving end does not exist' error.
+            return reject(chrome.runtime.lastError.message);
+          }
+          const title = response?.title ?? "Unknown Video Title";
+          resolve(title);
+        }
+      );
+    });
+  };
+
+  try {
+    const title = await getTitleFromTab(tabId);
+    console.log("Title successfully retrieved:", title);
+
+    const category = await callGemini(title);
+    console.log("AI Suggested Category:", category);
+
+    if (category && CATEGORIES.includes(category)) {
+      chrome.runtime.sendMessage({
+        action: "startTimer",
+        category: category,
+        tabId: tabId,
+      });
+
+      statusEl.textContent = `AI suggests: ${category}`;
+      showCategorizedUI(category, true); // Optionally highlight the suggested button
+    }
+  } catch (error) {
+    console.error(
+      "Failed to classify video (Retries exhausted/Tab error):",
+      error
+    );
+    statusEl.textContent = "AI failed to load. Please categorize manually:";
+  }
+};
+
 // --- Main Function ---
 document.addEventListener("DOMContentLoaded", async () => {
   // 1. Get all DOM elements
@@ -28,7 +80,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   // 3. Check if tab is *already* categorized
-  // THIS IS THE FIX: We are correctly calling "getTabStatus"
   chrome.runtime.sendMessage(
     { action: "getTabStatus", tabId: tab.id },
     (response) => {
@@ -47,6 +98,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         showCategorizedUI(response.category);
       } else {
         // --- This tab is NOT categorized ---
+        getAiTitle(tab.id);
+
         statusEl.textContent = "Categorize this video:";
         addClickListeners(tab.id); // Only add listeners if uncategorized
       }
@@ -71,9 +124,7 @@ window.addEventListener("unload", () => {
  * Updates the stats display
  */
 async function updateStatsDisplay() {
-  // NEW: The response is now an object { stats, limits }
   chrome.runtime.sendMessage({ action: "getLiveStats" }, (response) => {
-    // *** UPDATED: More robust check ***
     if (
       chrome.runtime.lastError ||
       !response ||
@@ -84,19 +135,16 @@ async function updateStatsDisplay() {
         "Error getting live stats or limits (background script might be waking up):",
         chrome.runtime.lastError
       );
-      // Show a loading state to prevent "undefined"
       trashEl.textContent = "Loading...";
       interestingEl.textContent = "Loading...";
       curriculumEl.textContent = "Loading...";
       phdEl.textContent = "Loading...";
-      return; // Fail gracefully and wait for next 1-sec update
+      return; // Fail gracefully
     }
 
     const { stats, limits } = response;
     const msToMins = (ms) => (ms / MIN_TO_MS).toFixed(2);
 
-    // *** UPDATED: Read from stats and limits objects ***
-    // Add fallback checks for safety
     trashEl.textContent = `${msToMins(stats.trash)} / ${limits.trash || 0} min`;
     interestingEl.textContent = `${msToMins(stats.interesting)} / ${
       limits.interesting || 0
@@ -146,13 +194,10 @@ function showCategorizedUI(category) {
     phd: "🔬",
   };
 
-  // Update the status message to be more specific
   statusEl.textContent = `Categorized as: ${categoryToEmoji[category] || ""}`;
 
   allButtons.forEach((btn) => {
-    btn.disabled = true; // Disable all buttons
-
-    // Add a special class to the selected button
+    btn.disabled = true;
     if (btn.id === `btn-${category}`) {
       btn.classList.add("selected");
     } else {

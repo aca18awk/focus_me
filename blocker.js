@@ -34,8 +34,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === "unblockVideo") {
     unblockVideo();
     sendResponse({ success: true });
+  } else if (message.action === "requestTitleFromTab") {
+    console.log("requestTitleFromTab received.");
+    const title = getPageTitle();
+    console.log("title", title);
+    sendResponse({ title: title });
+    return true; // Keep channel open for async response
   }
 });
+
+function getPageTitle() {
+  const rawTitle = document.title;
+  // Strip the common YouTube suffix for a clean title
+  return rawTitle.replace(/ - YouTube$/, "").trim();
+}
 
 // --- 4. NEW: Handshake Function ---
 // We wrap the handshake in a function so we can call it on load AND on navigate.
