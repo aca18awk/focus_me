@@ -116,16 +116,30 @@
         <section id="tab-stats" class="tab-pane">
           <div class="settings-section">
             <h2>Your Stats</h2>
-            <p>
-              Visualizations of your time usage will appear here soon (Step 2).
-            </p>
-            <!-- Chart.js canvas will go here -->
+
+            <div
+              style="
+                margin-top: 20px;
+                padding: 15px;
+                background: white;
+                border-radius: 8px;
+                box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+              "
+            >
+              <h3>Productivity Trends</h3>
+              <select id="timeRange" style="margin-bottom: 10px; padding: 5px">
+                <option value="7">Last 7 Days</option>
+                <option value="30">Last 30 Days</option>
+                <option value="9999">All Time</option>
+              </select>
+              <canvas id="statsChart" width="500" height="300"></canvas>
+            </div>
           </div>
         </section>
       </main>
     </div>
 
-    <!-- We will add logic to this file next -->
+    <script src="chart.min.js"></script>
     <script src="settings.js"></script>
   </body>
 </html>

@@ -190,3 +190,64 @@ function loadSettings() {
     }
   });
 }
+
+document.addEventListener("DOMContentLoaded", loadChart);
+document.getElementById("timeRange").addEventListener("change", loadChart);
+
+async function loadChart() {
+  const range = parseInt(document.getElementById("timeRange").value);
+
+  // 1. Get ALL storage data
+  const allData = await chrome.storage.local.get(null);
+
+  // 2. Filter for keys that look like dates (YYYY-MM-DD)
+  const dateKeys = Object.keys(allData).filter((key) =>
+    /^\d{4}-\d{2}-\d{2}$/.test(key)
+  );
+
+  // 3. Sort dates
+  dateKeys.sort();
+
+  // 4. Slice based on range (take the last N days)
+  const recentKeys = dateKeys.slice(-range);
+
+  // 5. Prepare datasets
+  const labels = recentKeys;
+  const categories = ["phd", "curriculum", "interesting", "trash"];
+  const colors = {
+    phd: "#7437a5",
+    curriculum: "#789f04",
+    interesting: "#00acc1",
+    trash: "#bd0e0e",
+  };
+
+  const datasets = categories.map((cat) => ({
+    label: cat.toUpperCase(),
+    data: recentKeys.map((date) => {
+      const ms = allData[date][cat] || 0;
+      return (ms / 60000).toFixed(1); // Convert ms to minutes
+    }),
+    borderColor: colors[cat],
+    fill: false,
+    tension: 0.1,
+  }));
+
+  // 6. Render Chart
+  const ctx = document.getElementById("statsChart").getContext("2d");
+
+  // Destroy old chart if it exists to allow redrawing
+  if (window.myProductivityChart) {
+    window.myProductivityChart.destroy();
+  }
+
+  window.myProductivityChart = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      scales: {
+        y: { beginAtZero: true, title: { display: true, text: "Minutes" } },
+      },
+    },
+  });
+}
