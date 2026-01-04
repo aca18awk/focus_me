@@ -68,3 +68,12 @@ This script runs in the background, independent of the web page or the popup.
 3. **Extraction:** `content.js` receives the signal, scans the page DOM, and finds the target data.
 4. **Storage:** The data is saved to `chrome.storage.local`.
 5. **Display:** `popup.js` detects the storage change (or receives a response) and updates the HTML to show the tracked count/data.
+
+## Next Steps
+
+- [ ] AI to create journaling prompts
+- [ ] if AI makes a mistake, add that mistake to the prompt. So “title X should be category trash.”
+- [ ] list of all the watched videos in each category
+- [ ] block youtube shorts
+- [ ] refactor, look for bugs
+- [ ] extend this to reddit website
